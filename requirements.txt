@@ -1,0 +1,7 @@
+streamlit
+sqlalchemy
+mysql-connector-python
+aiomysql
+python-dotenv
+groq
+langchain
