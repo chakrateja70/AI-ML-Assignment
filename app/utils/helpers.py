@@ -2,7 +2,6 @@ import re
 from typing import Dict, Any, Tuple
 from app.db.mysql import get_db_connection
 
-
 def validate_candidate_data(data: Dict[str, Any]) -> Tuple[bool, str]:
 	"""
 	Validate candidate details.

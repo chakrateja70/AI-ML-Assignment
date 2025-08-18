@@ -9,96 +9,48 @@ def candidate_form():
     st.markdown("""
         <div style="
             text-align: center;
-            margin: 2rem 0 3rem 0;
+            margin: 2rem 0 2rem 0;
             padding: 0 1rem;
         ">
             <h1 style="
                 color: #e0e6ed; 
                 font-size: 2.5rem; 
-                margin-bottom: 1rem;
+                margin-bottom: 0.4rem;
                 font-weight: 600;
                 letter-spacing: -0.5px;
             ">🚀 TalentScout</h1>
             <p style="
                 color: #b0b8c1; 
-                font-size: 1.2rem; 
-                margin: 0 0 1.5rem 0;
+                font-size: 1.05rem; 
+                margin: 0;
                 font-weight: 400;
-                line-height: 1.5;
-            ">AI-Powered Technical Interview Platform</p>
-            
+            ">TalentScout is an intelligent technical interview assistant that leverages AI to conduct and analyze technical interviews.</p>
+        </div>
+        <div style="max-width: 800px; margin: 0 auto 1.5rem auto; padding: 0 0.5rem;">
+            <ul style="
+                color: #b0b8c1; 
+                font-size: 0.98rem; 
+                line-height: 1.8; 
+                list-style: none; 
+                padding: 0; 
+                margin: 0; 
+                display: grid; 
+                grid-template-columns: repeat(2, minmax(0,1fr)); 
+                column-gap: 1.25rem; 
+                row-gap: 0.25rem;
+            ">
+                <li>✨ Generates questions from your tech stack</li>
+                <li>⚖️ Adjusts difficulty by experience</li>
+                <li>📝 Evaluates answers with concise feedback</li>
+                <li>📋 Produces a short interview summary</li>
+            </ul>
         </div>
     """, unsafe_allow_html=True)
 
     if "candidate_data" not in st.session_state:
         st.session_state["candidate_data"] = None
 
-    # Beautiful sidebar with gradient
-    with st.sidebar:
-        st.markdown("""
-            <div style="
-                background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-                padding: 1.5rem;
-                border-radius: 1rem;
-                margin-bottom: 1.5rem;
-                border: 1px solid #3498db;
-                box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-            ">
-                <h3 style="
-                    color: #3498db; 
-                    margin: 0 0 1rem 0; 
-                    font-size: 1.2rem;
-                    text-align: center;
-                    border-bottom: 2px solid #3498db;
-                    padding-bottom: 0.5rem;
-                ">👤 Profile Preview</h3>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        if st.session_state["candidate_data"]:
-            cd = st.session_state["candidate_data"]
-            # Individual info items with icons and better styling
-            info_items = [
-                ("👤", "Name", cd['full_name']),
-                ("📧", "Email", cd['email']),
-                ("📱", "Phone", cd['phone']),
-                ("⏱️", "Experience", f"{cd['years_experience']} years"),
-                ("💼", "Position", cd['desired_position']),
-                ("📍", "Location", cd['current_location']),
-                ("🛠️", "Tech Stack", cd['tech_stack'])
-            ]
-            
-            for icon, label, value in info_items:
-                st.markdown(f"""
-                    <div style="
-                        background: rgba(52, 73, 94, 0.6);
-                        padding: 0.8rem;
-                        border-radius: 0.8rem;
-                        margin-bottom: 0.5rem;
-                        border-left: 4px solid #3498db;
-                    ">
-                        <div style="display: flex; align-items: center; gap: 0.5rem;">
-                            <span style="font-size: 1.2rem;">{icon}</span>
-                            <div>
-                                <div style="color: #bdc3c7; font-size: 0.8rem; margin-bottom: 0.2rem;">{label}</div>
-                                <div style="color: #ecf0f1; font-weight: 500;">{value}</div>
-                            </div>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-                <div style="
-                    background: rgba(52, 73, 94, 0.6);
-                    padding: 1.5rem;
-                    border-radius: 0.8rem;
-                    text-align: center;
-                    border: 2px dashed #3498db;
-                ">
-                    <div style="color: #bdc3c7; font-size: 0.9rem; margin-bottom: 0.5rem;">📋</div>
-                    <div style="color: #ecf0f1; font-size: 0.9rem; font-weight: 500;">Fill the form to see your profile here</div>
-                </div>
-            """, unsafe_allow_html=True)
+    # Sidebar removed as requested
 
     if not st.session_state["candidate_data"]:
         # Simple form container

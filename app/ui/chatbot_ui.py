@@ -1,6 +1,7 @@
 import streamlit as st
 from textwrap import dedent
 from app.ui.styles import REG_CSS
+from app.services.llm_service import LLMService
 
 def chatbot_ui():
     st.markdown(REG_CSS, unsafe_allow_html=True)
@@ -16,6 +17,8 @@ def chatbot_ui():
         st.session_state.interview_completed = False
     if "final_report" not in st.session_state:
         st.session_state.final_report = ""
+    if "asked_questions_global" not in st.session_state:
+        st.session_state.asked_questions_global = []
 
     # Sidebar
     with st.sidebar:
@@ -126,6 +129,13 @@ def chatbot_ui():
             if st.button("🔚 End Interview", type="secondary", use_container_width=True):
                 st.session_state.interview_started = False
                 st.session_state.messages = []
+                st.session_state.interview_questions = []
+                st.session_state.interview_scores = []
+                st.session_state.used_skills = []
+                st.session_state.current_question = None
+                st.session_state.question_count = 0
+                st.session_state.awaiting_answer = False
+                st.session_state.is_generating_question = False
                 st.rerun()
 
     # Greeting + Instructions
@@ -275,9 +285,19 @@ def chatbot_ui():
                 return line.strip()
         return text.strip()
 
+    def _normalize_question(text: str) -> str:
+        if not isinstance(text, str):
+            return ""
+        import re as _re
+        normalized = text.lower().strip()
+        normalized = _re.sub(r"\s+", " ", normalized)
+        normalized = _re.sub(r"[^a-z0-9 ?]", "", normalized)
+        return normalized
+
     # Generate a unique question by retrying a few times if duplicates occur
     def _generate_unique_question(llm, tech_stack_list, years_experience, avoid_list, polite: bool = False, prev_question: str | None = None, focus_skill: str | None = None) -> str:
-        seen = set(avoid_list or [])
+        seen_raw = list(avoid_list or [])
+        seen_norm = { _normalize_question(q) for q in (avoid_list or []) }
         last_q = ""
         for _ in range(3):
             try:
@@ -298,7 +318,7 @@ def chatbot_ui():
                     )
                 q = _extract_question_only(raw)
                 last_q = q
-                if q and q not in seen:
+                if q and _normalize_question(q) not in seen_norm:
                     return q
             except Exception:
                 # fall through to return last_q or continue retry
@@ -351,15 +371,24 @@ def chatbot_ui():
             tech_stack_list = [t.strip() for t in tech_stack.split(",") if t.strip()]
         else:
             tech_stack_list = tech_stack if tech_stack else []
-        from app.services.llm_service import LLMService
         llm = LLMService()
         # Reset completion/report on fresh start
         st.session_state.interview_completed = False
         st.session_state.final_report = ""
         focus_skill = _pick_next_skill(tech_stack_list)
-        question = _generate_unique_question(llm, tech_stack_list, years_experience, avoid_list=[], polite=False, focus_skill=focus_skill)
+        question = _generate_unique_question(
+            llm,
+            tech_stack_list,
+            years_experience,
+            avoid_list=st.session_state.get("asked_questions_global", []),
+            polite=False,
+            focus_skill=focus_skill,
+        )
         st.session_state.current_question = question
         st.session_state.messages.append({"role": "assistant", "content": question})
+        # Track globally to reduce repeats across interviews
+        if question and question not in st.session_state.asked_questions_global:
+            st.session_state.asked_questions_global.append(question)
         st.session_state.awaiting_answer = True
         st.session_state.question_count = 1
         st.session_state.interview_started = True
@@ -374,6 +403,14 @@ def chatbot_ui():
                 # Reset completion/report on fresh start
                 st.session_state.interview_completed = False
                 st.session_state.final_report = ""
+                # Reset per-interview state to avoid repetition
+                st.session_state.messages = []
+                st.session_state.interview_questions = []
+                st.session_state.interview_scores = []
+                st.session_state.used_skills = []
+                st.session_state.current_question = None
+                st.session_state.question_count = 0
+                st.session_state.awaiting_answer = False
                 st.session_state.is_generating_question = True
                 st.rerun()
         # Show final report below Start Interview if available
@@ -400,7 +437,6 @@ def chatbot_ui():
         tech_stack_list = [t.strip() for t in tech_stack.split(",") if t.strip()]
     else:
         tech_stack_list = tech_stack if tech_stack else []
-    from app.services.llm_service import LLMService
     llm = LLMService()
 
     # Removed separate text input; answers are handled via chat_input below
@@ -484,6 +520,13 @@ def chatbot_ui():
         if any(keyword in prompt.lower() for keyword in exit_keywords):
             st.session_state.interview_started = False
             st.session_state.messages = []
+            st.session_state.interview_questions = []
+            st.session_state.interview_scores = []
+            st.session_state.used_skills = []
+            st.session_state.current_question = None
+            st.session_state.question_count = 0
+            st.session_state.awaiting_answer = False
+            st.session_state.is_generating_question = False
             st.rerun()
             return
 
@@ -509,17 +552,34 @@ def chatbot_ui():
                 st.session_state.messages.append({"role": "assistant", "content": ai_response.replace('\n', '<br/>')})
             # Next question or end
             if st.session_state.question_count < 5:
-                avoid_list = st.session_state.interview_questions + [st.session_state.current_question]
+                avoid_list = (
+                    st.session_state.interview_questions
+                    + [st.session_state.current_question]
+                    + st.session_state.get("asked_questions_global", [])
+                )
                 if not prompt.strip():
                     next_question = _generate_unique_question(
-                        llm, tech_stack_list, years_experience, avoid_list=avoid_list, polite=True, prev_question=st.session_state.current_question, focus_skill=_pick_next_skill(tech_stack_list)
+                        llm,
+                        tech_stack_list,
+                        years_experience,
+                        avoid_list=avoid_list,
+                        polite=True,
+                        prev_question=st.session_state.current_question,
+                        focus_skill=_pick_next_skill(tech_stack_list),
                     )
                 else:
                     next_question = _generate_unique_question(
-                        llm, tech_stack_list, years_experience, avoid_list=avoid_list, polite=False, focus_skill=_pick_next_skill(tech_stack_list)
+                        llm,
+                        tech_stack_list,
+                        years_experience,
+                        avoid_list=avoid_list,
+                        polite=False,
+                        focus_skill=_pick_next_skill(tech_stack_list),
                     )
                 st.session_state.current_question = next_question
                 st.session_state.messages.append({"role": "assistant", "content": next_question})
+                if next_question and next_question not in st.session_state.asked_questions_global:
+                    st.session_state.asked_questions_global.append(next_question)
                 st.session_state.question_count += 1
                 st.session_state.awaiting_answer = True
             else:
