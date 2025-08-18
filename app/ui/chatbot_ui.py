@@ -1,4 +1,5 @@
 import streamlit as st
+from textwrap import dedent
 from app.ui.styles import REG_CSS
 
 def chatbot_ui():
@@ -9,6 +10,12 @@ def chatbot_ui():
         st.session_state.messages = []
     if "interview_started" not in st.session_state:
         st.session_state.interview_started = False
+    if "is_generating_question" not in st.session_state:
+        st.session_state.is_generating_question = False
+    if "interview_completed" not in st.session_state:
+        st.session_state.interview_completed = False
+    if "final_report" not in st.session_state:
+        st.session_state.final_report = ""
 
     # Sidebar
     with st.sidebar:
@@ -38,36 +45,83 @@ def chatbot_ui():
         """, unsafe_allow_html=True)
         
         candidate_data = st.session_state.get("candidate_data")
+        question_count = st.session_state.get("question_count", 0)
         if candidate_data:
             cd = candidate_data
             # Simple candidate profile section with all info inside
             st.markdown("""
-                <div style="
-                    background: rgba(52, 73, 94, 0.8);
-                    padding: 1.5rem;
-                    border-radius: 1rem;
-                    margin-bottom: 1.5rem;
-                    border: 1px solid #3498db;
-                ">
-                    <h3 style="
-                        color: #3498db; 
-                        margin: 0 0 1rem 0; 
-                        font-size: 1.1rem;
-                        text-align: center;
-                        font-weight: 600;
-                    ">👤 Candidate Profile</h3>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Display candidate info using Streamlit components
-            st.markdown(f"**Name:** {cd.get('full_name', '')}")
-            st.markdown(f"**Position:** {cd.get('desired_position', '')}")
-            st.markdown(f"**Experience:** {cd.get('years_experience', '')} years")
-            st.markdown(f"**Location:** {cd.get('current_location', '')}")
-            st.markdown(f"**Tech Stack:** {cd.get('tech_stack', '')}")
-            st.markdown(f"**Email:** {cd.get('email', '')}")
-            st.markdown(f"**Phone:** {cd.get('phone', '')}")
-            
+        <div style="
+            background: rgba(52, 73, 94, 0.8);
+            padding: 0.5rem; 
+            border-radius: 1rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #3498db;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        ">
+            <h3 style="
+                color: #3498db; 
+                margin: 0; 
+                font-size: 1.1rem;
+                font-weight: 600;
+            ">👤 Candidate Profile</h3>
+        </div>
+    """, unsafe_allow_html=True)
+
+            # Polished candidate profile card with structured alignment
+            email_value = cd.get('email', '') or ''
+            email_html = f'<a href="mailto:{email_value}" style="color:#3498db; text-decoration:underline;">{email_value}</a>' if email_value else ''
+            rows = [
+                ("Name", cd.get('full_name','')),
+                ("Position", cd.get('desired_position','')),
+                ("Experience", f"{cd.get('years_experience','')} years"),
+                ("Location", cd.get('current_location','')),
+                ("Tech Stack", cd.get('tech_stack','')),
+                ("Email", email_html),
+                ("Phone", cd.get('phone','')),
+            ]
+            if st.session_state.interview_started:
+                pv = min(question_count, 5)
+                rows.append(("Question", f"{pv} / 5"))
+            row_html = "".join(
+                [
+                    f'<div style="color:#bdc3c7; font-weight:600;">{label}</div>'
+                    f'<div style="color:#ecf0f1;">{value}</div>'
+                    for label, value in rows
+                ]
+            )
+            profile_html = (
+                '<div style="background: rgba(52, 73, 94, 0.6); padding: 0.8rem 1rem; border-radius: 0.8rem; border: 1px solid #2c3e50;">'
+                '<div style="display:grid; grid-template-columns: 120px 1fr; column-gap: 0.75rem; row-gap: 0.35rem; align-items:start;">'
+                f"{row_html}"
+                '</div>'
+                '</div>'
+            )
+            st.markdown(profile_html, unsafe_allow_html=True)
+            # Display question count with progress representation
+            if st.session_state.interview_started:
+                progress_value = min(question_count, 5)
+                progress_percent = int((progress_value / 5) * 100)
+                st.markdown(f"""
+                    <div style="margin-top: 0.2rem;">
+                        <div style="
+                            background: rgba(255,255,255,0.15);
+                            border-radius: 999px;
+                            overflow: hidden;
+                            height: 10px;
+                            border: 1px solid rgba(52,152,219,0.5);
+                        ">
+                            <div style="
+                                width: {progress_percent}%;
+                                background: linear-gradient(90deg, #3498db, #2ecc71);
+                                height: 100%;
+                                transition: width 300ms ease;
+                            "></div>
+                        </div>
+                        <div style="color:#bdc3c7; font-size:0.8rem; margin-top:0.3rem; text-align:right;">{progress_value}/5</div>
+                    </div>
+                """, unsafe_allow_html=True)
             # End interview button
             if st.button("🔚 End Interview", type="secondary", use_container_width=True):
                 st.session_state.interview_started = False
@@ -206,30 +260,136 @@ def chatbot_ui():
         st.session_state.question_count = 0
     if "awaiting_answer" not in st.session_state:
         st.session_state.awaiting_answer = False
+    if "used_skills" not in st.session_state:
+        st.session_state.used_skills = []
+
+    # Helper to extract only the question sentence from a possibly long LLM output
+    def _extract_question_only(text: str) -> str:
+        if not isinstance(text, str):
+            return ""
+        qmark_index = text.find("?")
+        if qmark_index != -1:
+            return text[: qmark_index + 1].strip()
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()
+        return text.strip()
+
+    # Generate a unique question by retrying a few times if duplicates occur
+    def _generate_unique_question(llm, tech_stack_list, years_experience, avoid_list, polite: bool = False, prev_question: str | None = None, focus_skill: str | None = None) -> str:
+        seen = set(avoid_list or [])
+        last_q = ""
+        for _ in range(3):
+            try:
+                if polite:
+                    raw = llm.polite_next_question(
+                        tech_stack_list,
+                        years_experience,
+                        prev_question or "",
+                        avoid_questions=avoid_list,
+                        focus_skill=focus_skill,
+                    )
+                else:
+                    raw = llm.generate_technical_question(
+                        tech_stack_list,
+                        years_experience,
+                        avoid_questions=avoid_list,
+                        focus_skill=focus_skill,
+                    )
+                q = _extract_question_only(raw)
+                last_q = q
+                if q and q not in seen:
+                    return q
+            except Exception:
+                # fall through to return last_q or continue retry
+                pass
+        return last_q or "Error generating question"
+
+    def _pick_next_skill(tech_stack_list):
+        if not tech_stack_list:
+            return None
+        # Choose the first skill not used yet; if all used, reset rotation
+        for skill in tech_stack_list:
+            if skill not in st.session_state.used_skills:
+                st.session_state.used_skills.append(skill)
+                return skill
+        st.session_state.used_skills = [tech_stack_list[0]]
+        return tech_stack_list[0]
+
+    # If we are generating the first question, show overlay and do the work here
+    if st.session_state.is_generating_question and not st.session_state.interview_started:
+        st.markdown(
+            """
+            <div style="
+                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                backdrop-filter: blur(6px);
+                background: rgba(0,0,0,0.4);
+                z-index: 9999;
+                display: flex; align-items: center; justify-content: center;
+            ">
+                <div style="text-align: center; color: #ecf0f1;">
+                    <div style="
+                        border: 4px solid rgba(255,255,255,0.2);
+                        border-top: 4px solid #3498db;
+                        border-radius: 50%; width: 48px; height: 48px;
+                        animation: spin 1s linear infinite; margin: 0 auto;
+                    "></div>
+                    <p style="margin-top: 1rem; font-size: 1.1rem;">Preparing your first question...</p>
+                </div>
+            </div>
+            <style>
+                @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        candidate_data = st.session_state.get("candidate_data", {})
+        tech_stack = candidate_data.get("tech_stack", "")
+        years_experience = candidate_data.get("years_experience", 0)
+        if isinstance(tech_stack, str):
+            tech_stack_list = [t.strip() for t in tech_stack.split(",") if t.strip()]
+        else:
+            tech_stack_list = tech_stack if tech_stack else []
+        from app.services.llm_service import LLMService
+        llm = LLMService()
+        # Reset completion/report on fresh start
+        st.session_state.interview_completed = False
+        st.session_state.final_report = ""
+        focus_skill = _pick_next_skill(tech_stack_list)
+        question = _generate_unique_question(llm, tech_stack_list, years_experience, avoid_list=[], polite=False, focus_skill=focus_skill)
+        st.session_state.current_question = question
+        st.session_state.messages.append({"role": "assistant", "content": question})
+        st.session_state.awaiting_answer = True
+        st.session_state.question_count = 1
+        st.session_state.interview_started = True
+        st.session_state.is_generating_question = False
+        st.rerun()
+        return
 
     if not st.session_state.interview_started:
         start_col = st.container()
         with start_col:
             if st.button("🚀 Start Interview", type="primary", use_container_width=True):
-                st.session_state.interview_started = True
-                candidate_data = st.session_state.get("candidate_data", {})
-                tech_stack = candidate_data.get("tech_stack", "")
-                years_experience = candidate_data.get("years_experience", 0)
-                if isinstance(tech_stack, str):
-                    tech_stack_list = [t.strip() for t in tech_stack.split(",") if t.strip()]
-                else:
-                    tech_stack_list = tech_stack if tech_stack else []
-                from app.services.llm_service import LLMService
-                llm = LLMService()
-                try:
-                    question = llm.generate_technical_question(tech_stack_list, years_experience)
-                except Exception as e:
-                    question = f"Error generating question: {str(e)}"
-                st.session_state.current_question = question
-                st.session_state.messages.append({"role": "assistant", "content": question})
-                st.session_state.awaiting_answer = True
-                st.session_state.question_count = 1
+                # Reset completion/report on fresh start
+                st.session_state.interview_completed = False
+                st.session_state.final_report = ""
+                st.session_state.is_generating_question = True
                 st.rerun()
+        # Show final report below Start Interview if available
+        if st.session_state.get("interview_completed") and st.session_state.get("final_report"):
+            st.markdown(
+                f"""
+                <div style="
+                    margin-top: 1rem; padding: 1rem; border: 1px solid #3498db; border-radius: 0.75rem;
+                    background: rgba(52, 73, 94, 0.6); color: #ecf0f1;
+                ">
+                    <h3 style="margin-top:0; color:#3498db;">📋 Interview Report</h3>
+                    <div style="white-space: pre-wrap; line-height: 1.6;">{st.session_state.final_report}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         return
 
     # Interview loop: max 5 questions
@@ -243,79 +403,7 @@ def chatbot_ui():
     from app.services.llm_service import LLMService
     llm = LLMService()
 
-    # Chat input for candidate answer
-    if st.session_state.awaiting_answer and st.session_state.question_count <= 5:
-        user_input = st.text_input("Your answer:", key=f"answer_{st.session_state.question_count}")
-        if st.button("Send", key=f"send_{st.session_state.question_count}"):
-            if user_input.strip():
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                # Evaluate answer
-                try:
-                    eval_result = llm.evaluate_answer(
-                        st.session_state.current_question,
-                        user_input,
-                        tech_stack_list,
-                        years_experience
-                    )
-                    score = eval_result.get("score", 0)
-                    feedback = eval_result.get("feedback", "")
-                except Exception as e:
-                    score = 0
-                    feedback = f"Error evaluating answer: {str(e)}"
-                st.session_state.interview_scores.append(score)
-                st.session_state.interview_questions.append(st.session_state.current_question)
-                st.session_state.messages.append({"role": "assistant", "content": f"Score: {score}/5\nFeedback: {feedback}"})
-                # Next question or end
-                if st.session_state.question_count < 5:
-                    try:
-                        next_question = llm.generate_technical_question(tech_stack_list, years_experience)
-                    except Exception as e:
-                        next_question = f"Error generating next question: {str(e)}"
-                    st.session_state.current_question = next_question
-                    st.session_state.messages.append({"role": "assistant", "content": next_question})
-                    st.session_state.question_count += 1
-                    st.session_state.awaiting_answer = True
-                else:
-                    # Generate report
-                    try:
-                        report = llm.generate_report(
-                            answers=[m["content"] for m in st.session_state.messages if m["role"] == "user"],
-                            scores=st.session_state.interview_scores,
-                            tech_stack=tech_stack_list,
-                            experience=years_experience
-                        )
-                    except Exception as e:
-                        report = f"Error generating report: {str(e)}"
-                    st.session_state.messages.append({"role": "assistant", "content": report})
-                    st.session_state.awaiting_answer = False
-                st.rerun()
-            else:
-                # No answer, handle politely and ask another question
-                try:
-                    polite_question = llm.polite_next_question(
-                        tech_stack_list,
-                        years_experience,
-                        st.session_state.current_question
-                    )
-                except Exception as e:
-                    polite_question = f"Error generating polite question: {str(e)}"
-                st.session_state.messages.append({"role": "assistant", "content": polite_question})
-                st.session_state.current_question = polite_question
-                st.session_state.question_count += 1
-                if st.session_state.question_count > 5:
-                    # Generate report
-                    try:
-                        report = llm.generate_report(
-                            answers=[m["content"] for m in st.session_state.messages if m["role"] == "user"],
-                            scores=st.session_state.interview_scores,
-                            tech_stack=tech_stack_list,
-                            experience=years_experience
-                        )
-                    except Exception as e:
-                        report = f"Error generating report: {str(e)}"
-                    st.session_state.messages.append({"role": "assistant", "content": report})
-                    st.session_state.awaiting_answer = False
-                st.rerun()
+    # Removed separate text input; answers are handled via chat_input below
 
     # ---------------- CHAT INTERFACE ---------------- #
     st.markdown('<div class="chat-container" style="margin-top:1rem;">', unsafe_allow_html=True)
@@ -385,8 +473,13 @@ def chatbot_ui():
                 unsafe_allow_html=True,
             )
 
-    # Chat input
-    if prompt := st.chat_input("Type your message here..."):
+    # Chat input (disabled when interview is completed)
+    if not st.session_state.get("interview_completed"):
+        prompt = st.chat_input("Type your message here...")
+    else:
+        prompt = None
+
+    if prompt:
         exit_keywords = ["exit", "quit", "end interview", "stop"]
         if any(keyword in prompt.lower() for keyword in exit_keywords):
             st.session_state.interview_started = False
@@ -395,12 +488,73 @@ def chatbot_ui():
             return
 
         st.session_state.messages.append({"role": "user", "content": prompt})
-        ai_response = (
-            f"I understand you said: '{prompt}'. "
-            "This is a simulated response. In real implementation, "
-            "this connects to the LLM for technical questions & feedback."
-        )
-        st.session_state.messages.append({"role": "assistant", "content": ai_response})
-        st.rerun()
+        # If we are awaiting an answer within the interview loop, evaluate and move forward
+        if st.session_state.awaiting_answer and st.session_state.question_count <= 5:
+            if prompt.strip():
+                try:
+                    eval_result = llm.evaluate_answer(
+                        st.session_state.current_question,
+                        prompt,
+                        tech_stack_list,
+                        years_experience
+                    )
+                    score = eval_result.get("score", 0)
+                    feedback = eval_result.get("feedback", "")
+                except Exception as e:
+                    score = 0
+                    feedback = f"Error evaluating answer: {str(e)}"
+                st.session_state.interview_scores.append(score)
+                st.session_state.interview_questions.append(st.session_state.current_question)
+                ai_response = f"Score: {score}/5\nFeedback: {feedback}"
+                st.session_state.messages.append({"role": "assistant", "content": ai_response.replace('\n', '<br/>')})
+            # Next question or end
+            if st.session_state.question_count < 5:
+                avoid_list = st.session_state.interview_questions + [st.session_state.current_question]
+                if not prompt.strip():
+                    next_question = _generate_unique_question(
+                        llm, tech_stack_list, years_experience, avoid_list=avoid_list, polite=True, prev_question=st.session_state.current_question, focus_skill=_pick_next_skill(tech_stack_list)
+                    )
+                else:
+                    next_question = _generate_unique_question(
+                        llm, tech_stack_list, years_experience, avoid_list=avoid_list, polite=False, focus_skill=_pick_next_skill(tech_stack_list)
+                    )
+                st.session_state.current_question = next_question
+                st.session_state.messages.append({"role": "assistant", "content": next_question})
+                st.session_state.question_count += 1
+                st.session_state.awaiting_answer = True
+            else:
+                try:
+                    report_body = llm.generate_report(
+                        answers=[m["content"] for m in st.session_state.messages if m["role"] == "user"],
+                        scores=st.session_state.interview_scores,
+                        tech_stack=tech_stack_list,
+                        experience=years_experience
+                    )
+                except Exception as e:
+                    report_body = f"Error generating report: {str(e)}"
+                scores = st.session_state.interview_scores
+                overall = round(sum(scores) / len(scores), 2) if scores else 0.0
+                st.session_state.final_report = f"{report_body}\n\nOverall Score: {overall}/5"
+                # Inform completion and thanks in chat
+                completion_msg = "All questions have been shown.\nThank you for attending interview Happy Learning."
+                st.session_state.messages.append({"role": "assistant", "content": completion_msg.replace('\n', '<br/>')})
+                st.session_state.awaiting_answer = False
+                st.session_state.interview_completed = True
+            st.rerun()
+        else:
+            # Generic chat response outside interview context
+            ai_response = (
+                f"I understand you said: '{prompt}'. "
+                "This is a simulated response. In real implementation, "
+                "this connects to the LLM for technical questions & feedback."
+            )
+            st.session_state.messages.append({"role": "assistant", "content": ai_response})
+            st.rerun()
+
+    # If interview completed, show only End Interview button instead of input field
+    if st.session_state.get("interview_completed"):
+        if st.button("🔚 End Interview", type="primary"):
+            st.session_state.interview_started = False
+            st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)

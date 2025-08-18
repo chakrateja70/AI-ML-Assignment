@@ -30,13 +30,37 @@ class LLMService:
         self._client = Groq(api_key=self.groq_api_key)
         self._initialized = True
 
-    def generate_technical_question(self, tech_stack: List[str], experience: int) -> str:
+    @staticmethod
+    def _difficulty_label_from_experience(experience: int) -> str:
+        if experience is None:
+            return "basic"
+        try:
+            years = int(experience)
+        except Exception:
+            years = 0
+        if years <= 0:
+            return "basic"
+        if 1 <= years <= 3:
+            return "moderate"
+        if 4 <= years <= 10:
+            return "upper-moderate"
+        return "hard"
+
+    def generate_technical_question(self, tech_stack: List[str], experience: int, avoid_questions: List[str] | None = None, focus_skill: str | None = None) -> str:
         """
         Generate a single technical question based on tech stack and experience.
         """
         self._initialize()
         prompt = PromptTemplate.from_template(TECH_QUESTION_SINGLE_PROMPT)
-        input_text = prompt.format(tech_stack=", ".join(tech_stack), experience=experience)
+        difficulty_label = self._difficulty_label_from_experience(experience)
+        avoid_block = "\n".join(f"- {q}" for q in (avoid_questions or [])) or "(none)"
+        input_text = prompt.format(
+            tech_stack=", ".join(tech_stack),
+            experience=experience,
+            difficulty_label=difficulty_label,
+            avoid_questions=avoid_block,
+            focus_skill=(focus_skill or "one of the listed skills")
+        )
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
@@ -60,25 +84,42 @@ class LLMService:
                 messages=[{"role": "user", "content": input_text}]
             )
             content = response.choices[0].message.content.strip()
-            # Expecting: "Score: X\nFeedback: ..."
+            # Expecting strict 2-line output: "Score: X" then "Feedback: ..."
             score = 0
             feedback = ""
-            for line in content.split("\n"):
+            lines = [l.strip() for l in content.split("\n") if l.strip()]
+            for line in lines:
                 if line.lower().startswith("score:"):
-                    score = int(line.split(":", 1)[1].strip())
+                    try:
+                        score = int(line.split(":", 1)[1].strip())
+                    except Exception:
+                        score = 0
                 elif line.lower().startswith("feedback:"):
                     feedback = line.split(":", 1)[1].strip()
+            # Clamp score and trim feedback to max 3 lines
+            score = max(0, min(5, score))
+            if feedback:
+                flines = [l.strip() for l in feedback.split("\n") if l.strip()]
+                feedback = "\n".join(flines[:3])
             return {"score": score, "feedback": feedback}
         except Exception as e:
             raise LLMError(f"Failed to evaluate answer: {str(e)}")
 
-    def polite_next_question(self, tech_stack: List[str], experience: int, prev_question: str) -> str:
+    def polite_next_question(self, tech_stack: List[str], experience: int, prev_question: str, avoid_questions: List[str] | None = None, focus_skill: str | None = None) -> str:
         """
         Politely handle no answer and ask another question.
         """
         self._initialize()
         prompt = PromptTemplate.from_template(POLITE_NEXT_QUESTION_PROMPT)
-        input_text = prompt.format(tech_stack=", ".join(tech_stack), experience=experience, prev_question=prev_question)
+        difficulty_label = self._difficulty_label_from_experience(experience)
+        avoid_block = "\n".join(f"- {q}" for q in (avoid_questions or [])) or "(none)"
+        input_text = prompt.format(
+            tech_stack=", ".join(tech_stack),
+            experience=experience,
+            difficulty_label=difficulty_label,
+            avoid_questions=avoid_block,
+            focus_skill=(focus_skill or "one of the listed skills")
+        )
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
