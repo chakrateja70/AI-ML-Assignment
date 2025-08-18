@@ -26,20 +26,7 @@ def candidate_form():
                 font-weight: 400;
                 line-height: 1.5;
             ">AI-Powered Technical Interview Platform</p>
-            <div style="
-                background: rgba(52, 152, 219, 0.1);
-                padding: 0.8rem 1.5rem;
-                border-radius: 0.8rem;
-                display: inline-block;
-                border: 1px solid rgba(52, 152, 219, 0.3);
-            ">
-                <p style="
-                    color: #3498db; 
-                    font-size: 1rem; 
-                    margin: 0;
-                    font-weight: 500;
-                ">📝 Complete your profile to start your interview journey</p>
-            </div>
+            
         </div>
     """, unsafe_allow_html=True)
 
