@@ -195,38 +195,127 @@ def chatbot_ui():
     #     </div>
     # """, unsafe_allow_html=True)
 
-    # Start Interview button (inline, no gap)
+    # Interview state management
+    if "interview_questions" not in st.session_state:
+        st.session_state.interview_questions = []
+    if "interview_scores" not in st.session_state:
+        st.session_state.interview_scores = []
+    if "current_question" not in st.session_state:
+        st.session_state.current_question = None
+    if "question_count" not in st.session_state:
+        st.session_state.question_count = 0
+    if "awaiting_answer" not in st.session_state:
+        st.session_state.awaiting_answer = False
+
     if not st.session_state.interview_started:
         start_col = st.container()
         with start_col:
-            # st.markdown("""
-            #     <div style="
-            #         background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
-            #         padding: 2rem;
-            #         border-radius: 1.5rem;
-            #         text-align: center;
-            #         box-shadow: 0 8px 32px rgba(0, 184, 148, 0.3);
-            #         border: 1px solid rgba(255,255,255,0.1);
-            #         margin: 2rem 0;
-            #     ">
-            #         <h2 style="
-            #             color: white; 
-            #             margin-bottom: 1rem;
-            #             font-size: 1.8rem;
-            #             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-            #         ">🎯 Ready to Start?</h2>
-            #         <p style="
-            #             color: rgba(255,255,255,0.9); 
-            #             margin-bottom: 1.5rem;
-            #             font-size: 1.1rem;
-            #         ">Click the button below to begin your technical interview</p>
-            #     </div>
-            # """, unsafe_allow_html=True)
-            
             if st.button("🚀 Start Interview", type="primary", use_container_width=True):
                 st.session_state.interview_started = True
+                candidate_data = st.session_state.get("candidate_data", {})
+                tech_stack = candidate_data.get("tech_stack", "")
+                years_experience = candidate_data.get("years_experience", 0)
+                if isinstance(tech_stack, str):
+                    tech_stack_list = [t.strip() for t in tech_stack.split(",") if t.strip()]
+                else:
+                    tech_stack_list = tech_stack if tech_stack else []
+                from app.services.llm_service import LLMService
+                llm = LLMService()
+                try:
+                    question = llm.generate_technical_question(tech_stack_list, years_experience)
+                except Exception as e:
+                    question = f"Error generating question: {str(e)}"
+                st.session_state.current_question = question
+                st.session_state.messages.append({"role": "assistant", "content": question})
+                st.session_state.awaiting_answer = True
+                st.session_state.question_count = 1
                 st.rerun()
-        return  # stop rendering below until started
+        return
+
+    # Interview loop: max 5 questions
+    candidate_data = st.session_state.get("candidate_data", {})
+    tech_stack = candidate_data.get("tech_stack", "")
+    years_experience = candidate_data.get("years_experience", 0)
+    if isinstance(tech_stack, str):
+        tech_stack_list = [t.strip() for t in tech_stack.split(",") if t.strip()]
+    else:
+        tech_stack_list = tech_stack if tech_stack else []
+    from app.services.llm_service import LLMService
+    llm = LLMService()
+
+    # Chat input for candidate answer
+    if st.session_state.awaiting_answer and st.session_state.question_count <= 5:
+        user_input = st.text_input("Your answer:", key=f"answer_{st.session_state.question_count}")
+        if st.button("Send", key=f"send_{st.session_state.question_count}"):
+            if user_input.strip():
+                st.session_state.messages.append({"role": "user", "content": user_input})
+                # Evaluate answer
+                try:
+                    eval_result = llm.evaluate_answer(
+                        st.session_state.current_question,
+                        user_input,
+                        tech_stack_list,
+                        years_experience
+                    )
+                    score = eval_result.get("score", 0)
+                    feedback = eval_result.get("feedback", "")
+                except Exception as e:
+                    score = 0
+                    feedback = f"Error evaluating answer: {str(e)}"
+                st.session_state.interview_scores.append(score)
+                st.session_state.interview_questions.append(st.session_state.current_question)
+                st.session_state.messages.append({"role": "assistant", "content": f"Score: {score}/5\nFeedback: {feedback}"})
+                # Next question or end
+                if st.session_state.question_count < 5:
+                    try:
+                        next_question = llm.generate_technical_question(tech_stack_list, years_experience)
+                    except Exception as e:
+                        next_question = f"Error generating next question: {str(e)}"
+                    st.session_state.current_question = next_question
+                    st.session_state.messages.append({"role": "assistant", "content": next_question})
+                    st.session_state.question_count += 1
+                    st.session_state.awaiting_answer = True
+                else:
+                    # Generate report
+                    try:
+                        report = llm.generate_report(
+                            answers=[m["content"] for m in st.session_state.messages if m["role"] == "user"],
+                            scores=st.session_state.interview_scores,
+                            tech_stack=tech_stack_list,
+                            experience=years_experience
+                        )
+                    except Exception as e:
+                        report = f"Error generating report: {str(e)}"
+                    st.session_state.messages.append({"role": "assistant", "content": report})
+                    st.session_state.awaiting_answer = False
+                st.rerun()
+            else:
+                # No answer, handle politely and ask another question
+                try:
+                    polite_question = llm.polite_next_question(
+                        tech_stack_list,
+                        years_experience,
+                        st.session_state.current_question
+                    )
+                except Exception as e:
+                    polite_question = f"Error generating polite question: {str(e)}"
+                st.session_state.messages.append({"role": "assistant", "content": polite_question})
+                st.session_state.current_question = polite_question
+                st.session_state.question_count += 1
+                if st.session_state.question_count > 5:
+                    # Generate report
+                    try:
+                        report = llm.generate_report(
+                            answers=[m["content"] for m in st.session_state.messages if m["role"] == "user"],
+                            scores=st.session_state.interview_scores,
+                            tech_stack=tech_stack_list,
+                            experience=years_experience
+                        )
+                    except Exception as e:
+                        report = f"Error generating report: {str(e)}"
+                    st.session_state.messages.append({"role": "assistant", "content": report})
+                    st.session_state.awaiting_answer = False
+                st.rerun()
 
     # ---------------- CHAT INTERFACE ---------------- #
     st.markdown('<div class="chat-container" style="margin-top:1rem;">', unsafe_allow_html=True)
