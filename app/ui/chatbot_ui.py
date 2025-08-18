@@ -2,6 +2,7 @@ import streamlit as st
 from textwrap import dedent
 from app.ui.styles import REG_CSS
 from app.services.llm_service import LLMService
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 def chatbot_ui():
     st.markdown(REG_CSS, unsafe_allow_html=True)
@@ -19,6 +20,10 @@ def chatbot_ui():
         st.session_state.final_report = ""
     if "asked_questions_global" not in st.session_state:
         st.session_state.asked_questions_global = []
+    if "sentiment_analyzer" not in st.session_state:
+        st.session_state.sentiment_analyzer = SentimentIntensityAnalyzer()
+    if "sentiment_history" not in st.session_state:
+        st.session_state.sentiment_history = []
 
     # Sidebar
     with st.sidebar:
@@ -136,6 +141,7 @@ def chatbot_ui():
                 st.session_state.question_count = 0
                 st.session_state.awaiting_answer = False
                 st.session_state.is_generating_question = False
+                st.session_state.sentiment_history = []
                 st.rerun()
 
     # Greeting + Instructions
@@ -412,6 +418,7 @@ def chatbot_ui():
                 st.session_state.question_count = 0
                 st.session_state.awaiting_answer = False
                 st.session_state.is_generating_question = True
+                st.session_state.sentiment_history = []
                 st.rerun()
         # Show final report below Start Interview if available
         if st.session_state.get("interview_completed") and st.session_state.get("final_report"):
@@ -478,6 +485,16 @@ def chatbot_ui():
                 unsafe_allow_html=True,
             )
         else:
+            sentiment_html = ""
+            try:
+                s = message.get("sentiment") if isinstance(message, dict) else None
+                if s is not None:
+                    label = s.get("label", "neutral")
+                    compound = float(s.get("compound", 0.0))
+                    color = "#2ecc71" if label == "positive" else ("#e74c3c" if label == "negative" else "#95a5a6")
+                    sentiment_html = f"<div style=\"position: absolute; top: -8px; right: 120px; background: {color}; padding: 0.3rem 0.6rem; border-radius: 1rem; font-size: 0.7rem; color: white; font-weight: 600;\">{label.title()} {compound:+.2f}</div>"
+            except Exception:
+                sentiment_html = ""
             st.markdown(
                 f"""
                 <div style="display: flex; justify-content: flex-end; margin: 0.8rem 0;">
@@ -502,12 +519,29 @@ def chatbot_ui():
                             color: white;
                             font-weight: 600;
                         ">👤 You</div>
+                        {sentiment_html}
                         {message["content"]}
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+
+    # Mood trend summary
+    if st.session_state.get("sentiment_history"):
+        avg_compound = sum(st.session_state.sentiment_history) / max(1, len(st.session_state.sentiment_history))
+        avg_label = "positive" if avg_compound >= 0.05 else ("negative" if avg_compound <= -0.05 else "neutral")
+        avg_color = "#2ecc71" if avg_label == "positive" else ("#e74c3c" if avg_label == "negative" else "#95a5a6")
+        st.markdown(
+            f"""
+            <div style=\"display:flex; justify-content:center; margin-top:0.5rem;\">
+                <div style=\"background:{avg_color}; color:white; padding:0.3rem 0.6rem; border-radius:999px; font-size:0.8rem;\">
+                    Mood trend: <strong>{avg_label.title()}</strong> ({avg_compound:+.2f})
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # Chat input (disabled when interview is completed)
     if not st.session_state.get("interview_completed"):
@@ -527,10 +561,19 @@ def chatbot_ui():
             st.session_state.question_count = 0
             st.session_state.awaiting_answer = False
             st.session_state.is_generating_question = False
+            st.session_state.sentiment_history = []
             st.rerun()
             return
 
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        # Sentiment analysis for user's message
+        try:
+            scores = st.session_state.sentiment_analyzer.polarity_scores(prompt)
+            compound = float(scores.get("compound", 0.0))
+        except Exception:
+            compound = 0.0
+        label = "positive" if compound >= 0.05 else ("negative" if compound <= -0.05 else "neutral")
+        st.session_state.messages.append({"role": "user", "content": prompt, "sentiment": {"compound": compound, "label": label}})
+        st.session_state.sentiment_history.append(compound)
         # If we are awaiting an answer within the interview loop, evaluate and move forward
         if st.session_state.awaiting_answer and st.session_state.question_count <= 5:
             if prompt.strip():
@@ -594,7 +637,14 @@ def chatbot_ui():
                     report_body = f"Error generating report: {str(e)}"
                 scores = st.session_state.interview_scores
                 overall = round(sum(scores) / len(scores), 2) if scores else 0.0
-                st.session_state.final_report = f"{report_body}\n\nOverall Score: {overall}/5"
+                # Append sentiment summary to final report
+                if st.session_state.get("sentiment_history"):
+                    avg_compound = sum(st.session_state.sentiment_history) / max(1, len(st.session_state.sentiment_history))
+                    avg_label = "positive" if avg_compound >= 0.05 else ("negative" if avg_compound <= -0.05 else "neutral")
+                    sent_summary = f"\nEmotion Trend: {avg_label.title()} ({avg_compound:+.2f} avg compound)"
+                else:
+                    sent_summary = ""
+                st.session_state.final_report = f"{report_body}\n\nOverall Score: {overall}/5{sent_summary}"
                 # Inform completion and thanks in chat
                 completion_msg = "All questions have been shown.\nThank you for attending interview Happy Learning."
                 st.session_state.messages.append({"role": "assistant", "content": completion_msg.replace('\n', '<br/>')})
