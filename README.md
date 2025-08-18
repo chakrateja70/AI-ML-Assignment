@@ -7,6 +7,10 @@ TalentScout is an intelligent technical interview assistant that leverages AI to
 - Handles skipped answers politely and avoids repeating questions
 - Produces a brief final summary report after a 5-question loop
 - Saves candidate profiles to MySQL before starting the interview
+- Real-time sentiment analysis of candidate responses using VADER SentimentIntensityAnalyzer
+  - Each candidate message is analyzed for sentiment (positive, neutral, negative)
+  - Sentiment is displayed visually in the chat UI and tracked as a mood trend
+  - The final interview report includes an overall emotion trend summary
 
 ### Installation Instructions
 1) Clone and enter the project directory
