@@ -1,7 +1,7 @@
 ## TalentScout - AI-Powered Technical Interview Assistant
 
 ### Project Overview
-TalentScout is a Streamlit-based hiring assistant that conducts short, AI-powered technical interviews. It:
+TalentScout is an intelligent technical interview assistant that leverages AI to conduct and analyze technical interviews. It provides a seamless experience for both interviewers and candidates by:
 - Generates questions tailored to a candidate’s tech stack and experience
 - Scores answers (0–5) with concise, actionable feedback
 - Handles skipped answers politely and avoids repeating questions
